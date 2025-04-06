@@ -1,188 +1,121 @@
-export class MinecraftGame {
-    constructor(canvasId, uiContainerId) {
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.module.js';
+
+class MinecraftGame {
+    constructor(canvasId) {
         this.canvas = document.getElementById(canvasId);
-        this.uiContainer = document.getElementById(uiContainerId);
+        this.scene = new THREE.Scene();
+        this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas });
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
 
-        if (!this.canvas || !this.uiContainer) throw new Error("Canvas or UI container not found.");
-        this.gl = this.canvas.getContext("webgl");
-        if (!this.gl) throw new Error("WebGL not supported in this browser.");
+        this.camera.position.set(0, 20, 50); // Initial player position
+        this.controls = null; // Placeholder for future player controls
 
-        this.textures = {
-            mainMenuBackground: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA...",
-            buttonTexture: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA...",
-            crosshair: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA...",
-            hotbarSlot: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA...",
-            blockTextures: {
-                grass: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA...",
-                stone: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA...",
-                wood: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA...",
-            },
-        };
-
-        this.worlds = []; // Store created worlds
-        this.servers = []; // Store multiplayer servers
-
-        this.blocks = []; // Store placed blocks
-        this.movement = { forward: false, backward: false, left: false, right: false, jump: false, crouch: false };
-        this.selectedBlock = "grass"; // Default selected block
-        this.hotbar = ["grass", "stone", "wood"]; // Hotbar with block types
-        this.hotbarIndex = 0;
+        this.BLOCK_SIZE = 1; // Size of each block
+        this.textures = this.loadTextures(); // Load block textures
+        this.world = []; // Holds block meshes
+        this.players = []; // Multiplayer avatars
 
         this.init();
     }
 
+    loadTextures() {
+        const loader = new THREE.TextureLoader();
+        return {
+            grass: loader.load('https://upload.wikimedia.org/wikipedia/commons/3/36/Grass_texture.jpg'),
+            stone: loader.load('https://upload.wikimedia.org/wikipedia/commons/1/12/Stone_texture.jpg'),
+            water: loader.load('https://upload.wikimedia.org/wikipedia/commons/a/a4/Water_texture.jpg'),
+            sand: loader.load('https://upload.wikimedia.org/wikipedia/commons/5/58/Sand_texture.jpg'),
+        };
+    }
+
     async init() {
+        this.setupWorld();
+        this.setupLighting();
+        this.setupUI();
+        this.animate();
         this.setupControls();
-        this.showMainMenu();
+    }
+
+    setupWorld() {
+        const worldSize = 32; // 32x32 blocks
+        const maxHeight = 10;
+
+        for (let x = 0; x < worldSize; x++) {
+            for (let z = 0; z < worldSize; z++) {
+                // Use Perlin noise or random values for terrain height
+                const height = Math.floor(Math.random() * maxHeight); 
+                const blockType = height < 5 ? 'sand' : 'grass'; // Sand near sea level, grass elsewhere
+                for (let y = 0; y <= height; y++) {
+                    const type = y === height ? blockType : 'stone'; // Surface blocks are biome-specific
+                    this.addBlock(x, y, z, type);
+                }
+            }
+        }
+    }
+
+    addBlock(x, y, z, type) {
+        const geometry = new THREE.BoxGeometry(this.BLOCK_SIZE, this.BLOCK_SIZE, this.BLOCK_SIZE);
+        const material = new THREE.MeshStandardMaterial({ map: this.textures[type] });
+        const block = new THREE.Mesh(geometry, material);
+
+        block.position.set(x * this.BLOCK_SIZE, y * this.BLOCK_SIZE, z * this.BLOCK_SIZE);
+        this.scene.add(block);
+        this.world.push(block);
+    }
+
+    setupLighting() {
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5); // Soft ambient light
+        const sunLight = new THREE.DirectionalLight(0xffee88, 1); // Simulates sunlight
+        sunLight.castShadow = true;
+        sunLight.position.set(30, 50, 30);
+        this.scene.add(ambientLight);
+        this.scene.add(sunLight);
+    }
+
+    setupUI() {
+        // Example UI: Player HUD
+        const hud = document.createElement('div');
+        hud.style.position = 'absolute';
+        hud.style.top = '10px';
+        hud.style.left = '10px';
+        hud.style.color = 'white';
+        hud.style.fontFamily = 'Arial, sans-serif';
+        hud.style.zIndex = 1000;
+        hud.innerHTML = '<p>Health: ♥♥♥♥♥</p><p>Hunger: ☺☺☺☺☺</p>';
+        document.body.appendChild(hud);
     }
 
     setupControls() {
-        // Mouse lock for first-person look-around
-        this.canvas.addEventListener("click", () => this.canvas.requestPointerLock());
-        document.addEventListener("mousemove", (event) => {
+        // Basic player controls
+        document.addEventListener('keydown', (event) => {
+            const moveSpeed = 0.5;
+            switch (event.key) {
+                case 'w': this.camera.position.z -= moveSpeed; break;
+                case 's': this.camera.position.z += moveSpeed; break;
+                case 'a': this.camera.position.x -= moveSpeed; break;
+                case 'd': this.camera.position.x += moveSpeed; break;
+                case ' ': this.camera.position.y += moveSpeed; break; // Jump
+                case 'Shift': this.camera.position.y -= moveSpeed; break; // Crouch
+            }
+        });
+
+        document.addEventListener('mousemove', (event) => {
             if (document.pointerLockElement === this.canvas) {
-                console.log("Looking around...");
+                this.camera.rotation.y -= event.movementX * 0.002;
+                this.camera.rotation.x -= event.movementY * 0.002;
             }
         });
 
-        // Movement controls
-        document.addEventListener("keydown", (event) => {
-            switch (event.code) {
-                case "KeyW": this.movement.forward = true; break;
-                case "KeyS": this.movement.backward = true; break;
-                case "KeyA": this.movement.left = true; break;
-                case "KeyD": this.movement.right = true; break;
-                case "Space": this.movement.jump = true; break;
-                case "ShiftLeft": this.movement.crouch = true; break;
-            }
-        });
-        document.addEventListener("keyup", (event) => {
-            switch (event.code) {
-                case "KeyW": this.movement.forward = false; break;
-                case "KeyS": this.movement.backward = false; break;
-                case "KeyA": this.movement.left = false; break;
-                case "KeyD": this.movement.right = false; break;
-                case "Space": this.movement.jump = false; break;
-                case "ShiftLeft": this.movement.crouch = false; break;
-            }
-        });
-
-        // Scroll to switch blocks in hotbar
-        window.addEventListener("wheel", (event) => {
-            this.hotbarIndex = (this.hotbarIndex + (event.deltaY > 0 ? 1 : -1) + this.hotbar.length) % this.hotbar.length;
-            this.selectedBlock = this.hotbar[this.hotbarIndex];
-            console.log(`Selected block: ${this.selectedBlock}`);
-        });
-
-        // Left-click to break a block, right-click to place
-        document.addEventListener("mousedown", (event) => {
-            if (event.button === 0) this.breakBlock(); // Left-click
-            if (event.button === 2) this.placeBlock(); // Right-click
+        this.canvas.addEventListener('click', () => {
+            this.canvas.requestPointerLock();
         });
     }
 
-    showMainMenu() {
-        this.uiContainer.innerHTML = "";
-        const background = this.createUIElement("mainMenuBackground", "div", {
-            texture: this.textures.mainMenuBackground,
-            styles: { width: "100%", height: "100%", position: "absolute", top: 0, left: 0 },
-        });
-
-        const singlePlayerButton = this.createUIElement("singlePlayerButton", "button", {
-            text: "Single Player",
-            texture: this.textures.buttonTexture,
-            styles: { width: "200px", height: "50px", margin: "20px auto", lineHeight: "50px", display: "block", color: "white", textAlign: "center" },
-            onClick: () => this.showSinglePlayerUI(),
-        });
-
-        const multiplayerButton = this.createUIElement("multiplayerButton", "button", {
-            text: "Multiplayer",
-            texture: this.textures.buttonTexture,
-            styles: { width: "200px", height: "50px", margin: "20px auto", lineHeight: "50px", display: "block", color: "white", textAlign: "center" },
-            onClick: () => this.showMultiplayerUI(),
-        });
-
-        this.uiContainer.appendChild(background);
-        this.uiContainer.appendChild(singlePlayerButton);
-        this.uiContainer.appendChild(multiplayerButton);
-    }
-
-    showSinglePlayerUI() {
-        this.uiContainer.innerHTML = "";
-        const background = this.createUIElement("singlePlayerBackground", "div", {
-            texture: this.textures.singlePlayerBackground,
-            styles: { width: "100%", height: "100%", position: "absolute", top: 0, left: 0 },
-        });
-
-        const createWorldButton = this.createUIElement("createWorldButton", "button", {
-            text: "Create World",
-            texture: this.textures.buttonTexture,
-            styles: { width: "200px", height: "50px", margin: "20px auto", lineHeight: "50px", display: "block", color: "white", textAlign: "center" },
-            onClick: () => this.createWorld(),
-        });
-
-        this.uiContainer.appendChild(background);
-        this.uiContainer.appendChild(createWorldButton);
-    }
-
-    showMultiplayerUI() {
-        this.uiContainer.innerHTML = "";
-        const background = this.createUIElement("multiplayerBackground", "div", {
-            texture: this.textures.multiplayerBackground,
-            styles: { width: "100%", height: "100%", position: "absolute", top: 0, left: 0 },
-        });
-
-        const addServerButton = this.createUIElement("addServerButton", "button", {
-            text: "Add Server",
-            texture: this.textures.buttonTexture,
-            styles: { width: "200px", height: "50px", margin: "20px auto", lineHeight: "50px", display: "block", color: "white", textAlign: "center" },
-            onClick: () => this.addServer(),
-        });
-
-        const createServerButton = this.createUIElement("createServerButton", "button", {
-            text: "Create Server",
-            texture: this.textures.buttonTexture,
-            styles: { width: "200px", height: "50px", margin: "20px auto", lineHeight: "50px", display: "block", color: "white", textAlign: "center" },
-            onClick: () => this.createServer(),
-        });
-
-        this.uiContainer.appendChild(background);
-        this.uiContainer.appendChild(addServerButton);
-        this.uiContainer.appendChild(createServerButton);
-    }
-
-    createUIElement(id, type, { text, texture, styles, onClick }) {
-        const element = document.createElement(type);
-        if (text) element.textContent = text;
-        if (texture) element.style.backgroundImage = `url('${texture}')`;
-        if (styles) Object.assign(element.style, styles);
-        if (onClick) element.onclick = onClick;
-        element.id = id;
-        return element;
-    }
-
-    createWorld() {
-        const worldName = prompt("Enter world name:");
-        if (worldName) {
-            this.worlds.push({ name: worldName });
-            alert(`World "${worldName}" created.`);
-        }
-    }
-
-    addServer() {
-        const serverName = prompt("Enter server name:");
-        const serverAddress = prompt("Enter server address:");
-        if (serverName && serverAddress) {
-            this.servers.push({ name: serverName, address: serverAddress });
-            alert(`Server "${serverName}" added.`);
-        }
-    }
-
-    placeBlock() {
-        console.log(`Placing block: ${this.selectedBlock}`);
-    }
-
-    breakBlock() {
-        console.log("Breaking block...");
+    animate() {
+        requestAnimationFrame(() => this.animate());
+        this.renderer.render(this.scene, this.camera);
     }
 }
+
+export default MinecraftGame;
